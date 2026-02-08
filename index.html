@@ -1,13 +1,189 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/logo+xml" href="/logo.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title> Tencent RTC - Call </title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agora Video Call Độc Lập</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <style>
+        body {
+            background-color: #1a1a1a;
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+        }
+
+        .video-container {
+            height: 450px;
+            background: #000;
+            border-radius: 15px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .video-player {
+            width: 100%;
+            height: 100%;
+            background: #2c2c2c;
+        }
+
+        .controls {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 50px;
+            display: inline-flex;
+            gap: 20px;
+        }
+
+        .badge-status {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 10;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container text-center">
+        <h2 class="fw-bold mb-4 text-primary"><i class="bi bi-broadcast me-2"></i>AGORA VIDEO CALL</h2>
+
+        <div id="join-form" class="row justify-content-center mb-5">
+            <div class="col-md-5">
+                <div class="input-group">
+                    <input type="text" id="channel" class="form-control"
+                        placeholder="Nhập tên phòng (ví dụ: phong_hop_1)">
+                    <button class="btn btn-primary px-4 fw-bold" onclick="joinCall()">THAM GIA</button>
+                </div>
+                <small class="text-secondary mt-2 d-block">Lưu ý: Bạn cần cấp quyền Camera/Mic để hoạt động</small>
+            </div>
+        </div>
+
+        <div id="call-area" class="d-none">
+            <div class="row g-3 mb-4">
+                <div class="col-md-6">
+                    <div class="video-container shadow-lg border border-secondary">
+                        <span class="badge bg-primary badge-status">LOCAL (BẠN)</span>
+                        <div id="local-player" class="video-player"></div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="video-container shadow-lg border border-secondary">
+                        <span class="badge bg-danger badge-status">REMOTE (ĐỐI PHƯƠNG)</span>
+                        <div id="remote-player" class="video-player"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls shadow-lg">
+                <button class="btn btn-outline-light rounded-circle" id="btn-mic" onclick="toggleMic()">
+                    <i class="bi bi-mic-fill"></i>
+                </button>
+                <button class="btn btn-outline-light rounded-circle" id="btn-video" onclick="toggleVideo()">
+                    <i class="bi bi-camera-video-fill"></i>
+                </button>
+                <button class="btn btn-danger rounded-pill px-4" onclick="leaveCall()">
+                    <i class="bi bi-telephone-x-fill me-2"></i>RỜI PHÒNG
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.20.0.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+    <script>
+        // Cấu hình Agora - THAY APP ID CỦA BẠN VÀO ĐÂY
+        const APP_ID = "fbac79bb0fdb4219917cffb9a1b97772"; //
+        let rtc = {
+            client: null,
+            localAudioTrack: null,
+            localVideoTrack: null,
+        };
+
+        let isMicOn = true;
+        let isVideoOn = true;
+
+        async function joinCall() {
+            const channelName = document.getElementById('channel').value;
+            if (!channelName) {
+                Swal.fire('Lỗi', 'Vui lòng nhập tên phòng!', 'warning');
+                return;
+            }
+
+            try {
+                // Khởi tạo Client
+                rtc.client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+
+                // Tham gia Channel (Token để null nếu dùng Testing Mode)
+                await rtc.client.join(APP_ID, channelName, null, null);
+
+                // Tạo Track Audio & Video từ thiết bị
+                rtc.localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+                rtc.localVideoTrack = await AgoraRTC.createCameraVideoTrack();
+
+                // Hiển thị UI cuộc gọi
+                document.getElementById('join-form').classList.add('d-none');
+                document.getElementById('call-area').classList.remove('d-none');
+
+                // Phát video của mình
+                rtc.localVideoTrack.play("local-player");
+
+                // Đưa dữ liệu lên server cho người khác thấy
+                await rtc.client.publish([rtc.localAudioTrack, rtc.localVideoTrack]);
+
+                // Lắng nghe khi có người khác tham gia và phát video
+                rtc.client.on("user-published", async (user, mediaType) => {
+                    await rtc.client.subscribe(user, mediaType);
+                    if (mediaType === "video") {
+                        user.videoTrack.play("remote-player");
+                    }
+                    if (mediaType === "audio") {
+                        user.audioTrack.play();
+                    }
+                });
+
+                rtc.client.on("user-unpublished", user => {
+                    document.getElementById('remote-player').innerHTML = "";
+                });
+
+            } catch (error) {
+                console.error(error);
+                Swal.fire('Lỗi', 'Không thể truy cập Camera/Mic hoặc sai App ID!', 'error');
+            }
+        }
+
+        async function leaveCall() {
+            // Đóng các track thiết bị
+            rtc.localAudioTrack?.close();
+            rtc.localVideoTrack?.close();
+
+            // Rời khỏi channel
+            await rtc.client?.leave();
+
+            // Quay lại màn hình chờ
+            location.reload();
+        }
+
+        function toggleMic() {
+            isMicOn = !isMicOn;
+            rtc.localAudioTrack.setEnabled(isMicOn);
+            document.getElementById('btn-mic').classList.toggle('btn-secondary');
+            document.getElementById('btn-mic').innerHTML = isMicOn ? '<i class="bi bi-mic-fill"></i>' : '<i class="bi bi-mic-mute-fill"></i>';
+        }
+
+        function toggleVideo() {
+            isVideoOn = !isVideoOn;
+            rtc.localVideoTrack.setEnabled(isVideoOn);
+            document.getElementById('btn-video').classList.toggle('btn-secondary');
+            document.getElementById('btn-video').innerHTML = isVideoOn ? '<i class="bi bi-camera-video-fill"></i>' : '<i class="bi bi-camera-video-off-fill"></i>';
+        }
+    </script>
+
+</body>
+
 </html>
